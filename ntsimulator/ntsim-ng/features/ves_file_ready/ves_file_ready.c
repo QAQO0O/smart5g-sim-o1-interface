@@ -408,7 +408,7 @@ static void *ves_file_ready_periodic_update_thread_routine(void *arg) {
     time_t now, next;
 
     while((!framework_sigint) && (!ves_periodic_stopsig)) {
-        sleep(1);
+        sleep(10);
 
         now = time(NULL);
         next = now + 1; // next second

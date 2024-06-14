@@ -28,6 +28,9 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <assert.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <sys/select.h>
 
 #include <sysrepo.h>
 #include <sysrepo/values.h>
@@ -262,11 +265,13 @@ int administrative_state_change_cb(sr_session_ctx_t *session, const char *module
 
                 if (strcmp(new_value->data.enum_val, "locked") == 0) {
                     log_add_verbose(1, "Switching OFF cell with id=%s\n", cell_id);
-                    change_cell_tx_power(cell_id, off_tx_power);
+                    set_sector_visibility(cell_id, 0);
+                    // change_cell_tx_power(cell_id, off_tx_power);
                 }
                 else if (strcmp(new_value->data.enum_val, "unlocked") == 0) {
                     log_add_verbose(1, "Switching ON cell with id=%s\n", cell_id);
-                    change_cell_tx_power(cell_id, on_tx_power);
+                    set_sector_visibility(cell_id, 1);
+                    // change_cell_tx_power(cell_id, on_tx_power);
                 }
                 else {
                     log_error("Unsupported value (%s)\n", new_value->data.enum_val);
@@ -985,4 +990,112 @@ static char *nf_du_template_process_function(const char *function, const nf_du_t
     }
 
     return 0;
+}
+
+void set_sector_visibility(char *cell_id, int cell_state) {
+    int sock;
+    struct sockaddr_in server_addr;
+    char buffer[1024] = "";
+    char data[1024] = "";
+    ssize_t bytes_received;
+    struct timeval timeout;
+    char command[256] = "";
+    fd_set readfds, writefds;
+
+    if (strcmp("13842601454c001", cell_id) == 0) {
+	sprintf(command, "set sector.visible %d %d\n", 1, cell_state);
+    } else if (strcmp("138426014550001", cell_id) == 0) {
+	sprintf(command, "set sector.visible %d %d\n", 2, cell_state);
+    }
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+
+    log_add_verbose(1,"command: %s\n", command);
+
+    // Set send and rcv timeout
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0) {
+        log_error("Setsockopt failed for receive timeout");
+        close(sock);
+        return;
+    }
+
+    if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout)) < 0) {
+        log_error("Setsockopt failed for send timeout");
+        close(sock);
+        return;
+    }
+
+
+    char *server_ip = getenv("UESIM_CLI_ADDRESS") ? strdup(getenv("UESIM_CLI_ADDRESS")) : strdup("127.0.0.1");
+    int server_port = get_int_from_string_with_default(getenv("UESIM_CLI_PORT"), 5001);
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(server_port);
+    server_addr.sin_addr.s_addr = inet_addr(server_ip);
+
+    // connect
+    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+	log_error("Connection failed: %s", strerror(errno));
+        close(sock);
+        return;
+    }
+
+    FD_ZERO(&readfds);
+    FD_SET(sock, &readfds);
+
+    // digest banner and command prompt
+    while (strstr(data, "# ") == NULL) {
+        int result = select(sock + 1, &readfds, NULL, NULL, &timeout);
+
+        if (result > 0) {
+	    log_add_verbose(1, "Received result > 0\n");
+    	    ssize_t bytes = recv(sock, buffer, sizeof(buffer), 0);
+            if (bytes > 0) {
+                buffer[bytes] = '\0';
+		log_add_verbose(1, "%s\n", buffer);
+                strcat(data, buffer);
+		log_add_verbose(1, "Received bytes > 0\n");
+                if (strstr(data, "FAIL") != NULL || strlen(data) == 0) {
+                    log_add_verbose(1, "Received 'FAIL' in command prompt\n");
+		    break;		    
+                }
+            } else {
+		log_add_verbose(1, "Received nothing \n");
+                break;
+            }
+        } else {
+	    log_add_verbose(1, "select failed\n");
+            break;
+        }  
+    }
+
+    memset(buffer, 0, sizeof(buffer));
+    
+    if (send(sock, command, sizeof(command), 0) < 0) {
+        log_error("Send failed");
+        close(sock);
+        return;
+    }
+
+    if (recv(sock, buffer, sizeof(buffer), 0) < 0) {
+        log_error("nf_orn_du.c recv() response failed:%s\n", strerror(errno));
+        close(sock);
+        return;
+        } else {
+            log_add_verbose(1, "%s\n", buffer);
+    }
+   
+    if (strstr(buffer, "OK") != NULL) {
+        log_add_verbose(1, "Received 'OK' from server: %s\n", buffer);
+    } else {
+        log_add_verbose(1,"No 'OK' in server response: %s\n", buffer);
+    }
+
+    // close socket
+    close(sock);
+    return;
 }
