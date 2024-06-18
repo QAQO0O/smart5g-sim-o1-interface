@@ -295,7 +295,7 @@ int network_function_run(void) {
                     }
                 }
             }
-
+/*
             if(strstr(nf_function_control_string, "ves-file-ready-periodic") != 0) {
                 if(nf_function_control_string[0] == '1') {
                     // start feature for periodic sending of the fileReady VES message
@@ -312,7 +312,7 @@ int network_function_run(void) {
                     }
                 }
             }
-
+*/
             if(strstr(nf_function_control_string, "ves-file-ready-periodic") != 0) {
                 if(nf_function_control_string[0] == '1') {
                     // start feature for periodic sending of the fileReady VES message
