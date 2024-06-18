@@ -1075,7 +1075,7 @@ void set_sector_visibility(char *cell_id, int cell_state) {
 
     memset(buffer, 0, sizeof(buffer));
     
-    if (send(sock, command, sizeof(command), 0) < 0) {
+    if (send(sock, command, strlen(command), 0) < 0) {
         log_error("Send failed");
         close(sock);
         return;
